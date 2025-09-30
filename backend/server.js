@@ -74,7 +74,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Route pour récupérer les infos du manager connecté
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
     const manager = await Manager.findByPk(req.manager.id, {
@@ -184,6 +183,30 @@ app.get('/api/entretiens', authenticateToken, async (req, res) => {
   }
 });
 
+app.get('/api/entretiens/:id', authenticateToken, async (req, res) => {
+  try {
+    const entretien = await Entretien.findOne({
+      where: { 
+        id: req.params.id,
+        manager_id: req.manager.id
+      },
+      include: [
+        { model: Employee, as: 'employee' },
+        { model: Template, as: 'template' }
+      ]
+    });
+
+    if (entretien) {
+      res.json(entretien);
+    } else {
+      res.status(404).json({ error: 'Entretien non trouvé' });
+    }
+  } catch (error) {
+    console.error('Erreur récupération entretien:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 app.post('/api/entretiens', authenticateToken, async (req, res) => {
   try {
     const { employee_id, template_id, type, date_prevue, titre, objectifs } = req.body;
@@ -254,6 +277,119 @@ app.delete('/api/entretiens/:id', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     console.error('Erreur suppression entretien:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// Routes pour les notes
+app.get('/api/entretiens/:id/notes', authenticateToken, async (req, res) => {
+  try {
+    const entretienId = req.params.id;
+    
+    // Vérifier que l'entretien appartient au manager
+    const entretien = await Entretien.findOne({
+      where: { 
+        id: entretienId,
+        manager_id: req.manager.id
+      }
+    });
+
+    if (!entretien) {
+      return res.status(404).json({ error: 'Entretien non trouvé' });
+    }
+
+    const notes = await Note.findAll({
+      where: { entretien_id: entretienId },
+      order: [['createdAt', 'ASC']]
+    });
+
+    res.json(notes);
+  } catch (error) {
+    console.error('Erreur récupération notes:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+app.post('/api/entretiens/:id/notes', authenticateToken, async (req, res) => {
+  try {
+    const entretienId = req.params.id;
+    const { section, contenu, type } = req.body;
+
+    // Vérifier que l'entretien appartient au manager
+    const entretien = await Entretien.findOne({
+      where: { 
+        id: entretienId,
+        manager_id: req.manager.id
+      }
+    });
+
+    if (!entretien) {
+      return res.status(404).json({ error: 'Entretien non trouvé' });
+    }
+
+    const newNote = await Note.create({
+      entretien_id: entretienId,
+      section,
+      contenu,
+      type
+    });
+
+    res.status(201).json(newNote);
+  } catch (error) {
+    console.error('Erreur création note:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+app.put('/api/notes/:id', authenticateToken, async (req, res) => {
+  try {
+    const noteId = req.params.id;
+    const { contenu } = req.body;
+
+    // Vérifier que la note appartient à un entretien du manager
+    const note = await Note.findOne({
+      where: { id: noteId },
+      include: [{
+        model: Entretien,
+        as: 'entretien',
+        where: { manager_id: req.manager.id }
+      }]
+    });
+
+    if (!note) {
+      return res.status(404).json({ error: 'Note non trouvée' });
+    }
+
+    await note.update({ contenu });
+    res.json(note);
+  } catch (error) {
+    console.error('Erreur modification note:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+app.delete('/api/notes/:id', authenticateToken, async (req, res) => {
+  try {
+    const noteId = req.params.id;
+
+    // Vérifier que la note appartient à un entretien du manager
+    const note = await Note.findOne({
+      where: { id: noteId },
+      include: [{
+        model: Entretien,
+        as: 'entretien',
+        where: { manager_id: req.manager.id }
+      }]
+    });
+
+    if (!note) {
+      return res.status(404).json({ error: 'Note non trouvée' });
+    }
+
+    await note.destroy();
+    res.json({ message: 'Note supprimée avec succès' });
+  } catch (error) {
+    console.error('Erreur suppression note:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });

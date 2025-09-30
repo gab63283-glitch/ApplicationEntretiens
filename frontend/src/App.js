@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Employees from './pages/Employees';
 import Entretiens from './pages/Entretiens';
 import NewEntretien from './pages/NewEntretien';
+import EntretienNotes from './pages/EntretienNotes';
 import './App.css';
 
 // Composant pour protéger les routes
@@ -53,6 +54,14 @@ function AppContent() {
           element={
             <PrivateRoute>
               <NewEntretien />
+            </PrivateRoute>
+          } 
+        />
+        <Route 
+          path="/entretiens/:id/notes" 
+          element={
+            <PrivateRoute>
+              <EntretienNotes />
             </PrivateRoute>
           } 
         />
