@@ -2,11 +2,14 @@ import React, { useContext } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, AuthContext } from './context/AuthContext';
 import Login from './pages/Login';
+import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Employees from './pages/Employees';
 import Entretiens from './pages/Entretiens';
 import NewEntretien from './pages/NewEntretien';
 import EntretienNotes from './pages/EntretienNotes';
+import EntretienObjectifs from './pages/EntretienObjectifs';
+import ObjectifsLibrary from './pages/ObjectifsLibrary';
 import './App.css';
 
 // Composant pour protéger les routes
@@ -25,6 +28,7 @@ function AppContent() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Login />} />
+        <Route path="/register" element={<Register />} />
         <Route 
           path="/dashboard" 
           element={
@@ -62,6 +66,22 @@ function AppContent() {
           element={
             <PrivateRoute>
               <EntretienNotes />
+            </PrivateRoute>
+          } 
+        />
+        <Route 
+          path="/entretiens/:id/objectifs" 
+          element={
+            <PrivateRoute>
+              <EntretienObjectifs />
+            </PrivateRoute>
+          } 
+        />
+        <Route 
+          path="/objectifs-library" 
+          element={
+            <PrivateRoute>
+              <ObjectifsLibrary />
             </PrivateRoute>
           } 
         />

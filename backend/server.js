@@ -4,7 +4,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
-const { Manager, Employee, Template, Entretien, Note, connectDB } = require('./database');
+const { Manager, Employee, Template, Entretien, Note, ObjectifTemplate, ObjectifAssigne, VerificationCode, connectDB } = require('./database');
+const { generateVerificationCode, sendVerificationCode, sendWelcomeEmail } = require('./emailService');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -70,6 +71,121 @@ app.post('/api/auth/login', async (req, res) => {
 
   } catch (error) {
     console.error('Erreur lors de la connexion:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+app.post('/api/auth/request-code', async (req, res) => {
+  try {
+    const { email, nom, mot_de_passe, departement } = req.body;
+
+    if (!email || !nom || !mot_de_passe) {
+      return res.status(400).json({ error: 'Tous les champs sont requis' });
+    }
+
+    const existingManager = await Manager.findOne({ where: { email } });
+    if (existingManager) {
+      return res.status(400).json({ error: 'Cet email est déjà utilisé' });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Format d\'email invalide' });
+    }
+
+    if (mot_de_passe.length < 8) {
+      return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères' });
+    }
+
+    const code = generateVerificationCode();
+    const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await VerificationCode.destroy({ where: { email, verified: false } });
+
+    await VerificationCode.create({
+      email,
+      code,
+      nom,
+      mot_de_passe_hash: hashedPassword,
+      departement: departement || null,
+      expires_at: expiresAt,
+      verified: false
+    });
+
+    const emailSent = await sendVerificationCode(email, code);
+
+    if (!emailSent) {
+      return res.status(500).json({ error: 'Erreur lors de l\'envoi de l\'email' });
+    }
+
+    res.json({ 
+      message: 'Code de vérification envoyé par email',
+      email: email
+    });
+
+  } catch (error) {
+    console.error('Erreur demande code:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+app.post('/api/auth/verify-code', async (req, res) => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({ error: 'Email et code requis' });
+    }
+
+    const verificationRecord = await VerificationCode.findOne({
+      where: { 
+        email, 
+        code,
+        verified: false
+      }
+    });
+
+    if (!verificationRecord) {
+      return res.status(400).json({ error: 'Code invalide ou déjà utilisé' });
+    }
+
+    if (new Date() > new Date(verificationRecord.expires_at)) {
+      await verificationRecord.destroy();
+      return res.status(400).json({ error: 'Code expiré, veuillez en demander un nouveau' });
+    }
+
+    const newManager = await Manager.create({
+      nom: verificationRecord.nom,
+      email: verificationRecord.email,
+      mot_de_passe: verificationRecord.mot_de_passe_hash,
+      departement: verificationRecord.departement
+    });
+
+    await verificationRecord.update({ verified: true });
+    await verificationRecord.destroy();
+
+    await sendWelcomeEmail(newManager.email, newManager.nom);
+
+    const token = jwt.sign(
+      { id: newManager.id, email: newManager.email, nom: newManager.nom },
+      process.env.JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+
+    res.status(201).json({
+      message: 'Compte créé avec succès !',
+      token,
+      manager: {
+        id: newManager.id,
+        nom: newManager.nom,
+        email: newManager.email,
+        departement: newManager.departement
+      }
+    });
+
+  } catch (error) {
+    console.error('Erreur vérification code:', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
@@ -286,7 +402,6 @@ app.get('/api/entretiens/:id/notes', authenticateToken, async (req, res) => {
   try {
     const entretienId = req.params.id;
     
-    // Vérifier que l'entretien appartient au manager
     const entretien = await Entretien.findOne({
       where: { 
         id: entretienId,
@@ -315,7 +430,6 @@ app.post('/api/entretiens/:id/notes', authenticateToken, async (req, res) => {
     const entretienId = req.params.id;
     const { section, contenu, type } = req.body;
 
-    // Vérifier que l'entretien appartient au manager
     const entretien = await Entretien.findOne({
       where: { 
         id: entretienId,
@@ -346,7 +460,6 @@ app.put('/api/notes/:id', authenticateToken, async (req, res) => {
     const noteId = req.params.id;
     const { contenu } = req.body;
 
-    // Vérifier que la note appartient à un entretien du manager
     const note = await Note.findOne({
       where: { id: noteId },
       include: [{
@@ -372,7 +485,6 @@ app.delete('/api/notes/:id', authenticateToken, async (req, res) => {
   try {
     const noteId = req.params.id;
 
-    // Vérifier que la note appartient à un entretien du manager
     const note = await Note.findOne({
       where: { id: noteId },
       include: [{
@@ -394,6 +506,311 @@ app.delete('/api/notes/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// ===== ROUTES POUR LA BIBLIOTHÈQUE D'OBJECTIFS (Templates) =====
+
+// GET - Récupérer tous les objectifs templates (bibliothèque partagée)
+app.get('/api/objectifs-templates', authenticateToken, async (req, res) => {
+  try {
+    const objectifs = await ObjectifTemplate.findAll({
+      where: { est_actif: true },
+      order: [['categorie', 'ASC'], ['titre', 'ASC']]
+    });
+    res.json(objectifs);
+  } catch (error) {
+    console.error('Erreur récupération objectifs templates:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// POST - Créer un nouvel objectif template
+app.post('/api/objectifs-templates', authenticateToken, async (req, res) => {
+  try {
+    const { titre, description, categorie } = req.body;
+
+    if (!titre || !categorie) {
+      return res.status(400).json({ error: 'Titre et catégorie requis' });
+    }
+
+    const newObjectif = await ObjectifTemplate.create({
+      titre,
+      description,
+      categorie,
+      est_actif: true
+    });
+
+    res.status(201).json(newObjectif);
+  } catch (error) {
+    console.error('Erreur création objectif template:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// PUT - Modifier un objectif template
+app.put('/api/objectifs-templates/:id', authenticateToken, async (req, res) => {
+  try {
+    const { titre, description, categorie, est_actif } = req.body;
+    const objectifId = req.params.id;
+
+    const [updatedRows] = await ObjectifTemplate.update(
+      { titre, description, categorie, est_actif },
+      { where: { id: objectifId } }
+    );
+
+    if (updatedRows > 0) {
+      const updatedObjectif = await ObjectifTemplate.findByPk(objectifId);
+      res.json(updatedObjectif);
+    } else {
+      res.status(404).json({ error: 'Objectif non trouvé' });
+    }
+  } catch (error) {
+    console.error('Erreur modification objectif template:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// DELETE - Désactiver un objectif template (soft delete)
+app.delete('/api/objectifs-templates/:id', authenticateToken, async (req, res) => {
+  try {
+    const objectifId = req.params.id;
+
+    const [updatedRows] = await ObjectifTemplate.update(
+      { est_actif: false },
+      { where: { id: objectifId } }
+    );
+
+    if (updatedRows > 0) {
+      res.json({ message: 'Objectif désactivé avec succès' });
+    } else {
+      res.status(404).json({ error: 'Objectif non trouvé' });
+    }
+  } catch (error) {
+    console.error('Erreur suppression objectif template:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// ===== ROUTES POUR LES OBJECTIFS ASSIGNÉS =====
+
+// GET - Récupérer les objectifs assignés à un employé
+app.get('/api/employees/:id/objectifs', authenticateToken, async (req, res) => {
+  try {
+    const employeeId = req.params.id;
+
+    const employee = await Employee.findOne({
+      where: { 
+        id: employeeId,
+        manager_id: req.manager.id
+      }
+    });
+
+    if (!employee) {
+      return res.status(404).json({ error: 'Employé non trouvé' });
+    }
+
+    const objectifs = await ObjectifAssigne.findAll({
+      where: { employee_id: employeeId },
+      include: [
+        { model: ObjectifTemplate, as: 'objectifTemplate' },
+        { model: Entretien, as: 'entretien', attributes: ['titre', 'date_prevue', 'type'] }
+      ],
+      order: [['date_assignation', 'DESC']]
+    });
+
+    res.json(objectifs);
+  } catch (error) {
+    console.error('Erreur récupération objectifs employé:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// GET - Récupérer les objectifs assignés lors d'un entretien
+app.get('/api/entretiens/:id/objectifs-assignes', authenticateToken, async (req, res) => {
+  try {
+    const entretienId = req.params.id;
+
+    const entretien = await Entretien.findOne({
+      where: { 
+        id: entretienId,
+        manager_id: req.manager.id
+      }
+    });
+
+    if (!entretien) {
+      return res.status(404).json({ error: 'Entretien non trouvé' });
+    }
+
+    const objectifs = await ObjectifAssigne.findAll({
+      where: { entretien_id: entretienId },
+      include: [
+        { model: ObjectifTemplate, as: 'objectifTemplate' },
+        { model: Employee, as: 'employee', attributes: ['nom'] }
+      ],
+      order: [['date_assignation', 'DESC']]
+    });
+
+    res.json(objectifs);
+  } catch (error) {
+    console.error('Erreur récupération objectifs entretien:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// POST - Assigner un objectif à un employé (durant un entretien ou non)
+app.post('/api/objectifs-assignes', authenticateToken, async (req, res) => {
+  try {
+    const { objectif_template_id, employee_id, entretien_id, priorite, date_echeance, notes } = req.body;
+
+    if (!objectif_template_id || !employee_id) {
+      return res.status(400).json({ error: 'Objectif template et employé requis' });
+    }
+
+    // Vérifier que l'employé appartient au manager
+    const employee = await Employee.findOne({
+      where: { 
+        id: employee_id,
+        manager_id: req.manager.id
+      }
+    });
+
+    if (!employee) {
+      return res.status(404).json({ error: 'Employé non trouvé' });
+    }
+
+    // Si un entretien est spécifié, vérifier qu'il appartient au manager
+    if (entretien_id) {
+      const entretien = await Entretien.findOne({
+        where: { 
+          id: entretien_id,
+          manager_id: req.manager.id
+        }
+      });
+
+      if (!entretien) {
+        return res.status(404).json({ error: 'Entretien non trouvé' });
+      }
+    }
+
+    const newAssignation = await ObjectifAssigne.create({
+      objectif_template_id,
+      employee_id,
+      entretien_id: entretien_id || null,
+      priorite: priorite || 'moyenne',
+      date_assignation: new Date(),
+      date_echeance: date_echeance || null,
+      statut: 'en_cours',
+      progres: 0,
+      notes: notes || null
+    });
+
+    const assignation = await ObjectifAssigne.findByPk(newAssignation.id, {
+      include: [
+        { model: ObjectifTemplate, as: 'objectifTemplate' },
+        { model: Employee, as: 'employee' }
+      ]
+    });
+
+    res.status(201).json(assignation);
+  } catch (error) {
+    console.error('Erreur assignation objectif:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// PUT - Mettre à jour une assignation d'objectif
+app.put('/api/objectifs-assignes/:id', authenticateToken, async (req, res) => {
+  try {
+    const assignationId = req.params.id;
+    const { priorite, date_echeance, statut, progres, notes } = req.body;
+
+    const assignation = await ObjectifAssigne.findOne({
+      where: { id: assignationId },
+      include: [{
+        model: Employee,
+        as: 'employee',
+        where: { manager_id: req.manager.id }
+      }]
+    });
+
+    if (!assignation) {
+      return res.status(404).json({ error: 'Assignation non trouvée' });
+    }
+
+    await assignation.update({
+      priorite,
+      date_echeance,
+      statut,
+      progres: Math.min(100, Math.max(0, progres || 0)),
+      notes
+    });
+
+    const updatedAssignation = await ObjectifAssigne.findByPk(assignationId, {
+      include: [
+        { model: ObjectifTemplate, as: 'objectifTemplate' },
+        { model: Employee, as: 'employee' }
+      ]
+    });
+
+    res.json(updatedAssignation);
+  } catch (error) {
+    console.error('Erreur modification assignation:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// DELETE - Supprimer une assignation d'objectif
+app.delete('/api/objectifs-assignes/:id', authenticateToken, async (req, res) => {
+  try {
+    const assignationId = req.params.id;
+
+    const assignation = await ObjectifAssigne.findOne({
+      where: { id: assignationId },
+      include: [{
+        model: Employee,
+        as: 'employee',
+        where: { manager_id: req.manager.id }
+      }]
+    });
+
+    if (!assignation) {
+      return res.status(404).json({ error: 'Assignation non trouvée' });
+    }
+
+    await assignation.destroy();
+    res.json({ message: 'Assignation supprimée avec succès' });
+  } catch (error) {
+    console.error('Erreur suppression assignation:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// GET - Récupérer tous les objectifs assignés (pour le dashboard)
+app.get('/api/objectifs-assignes', authenticateToken, async (req, res) => {
+  try {
+    // Récupérer tous les employés du manager
+    const employees = await Employee.findAll({
+      where: { manager_id: req.manager.id },
+      attributes: ['id']
+    });
+
+    const employeeIds = employees.map(e => e.id);
+
+    const objectifs = await ObjectifAssigne.findAll({
+      where: { employee_id: employeeIds },
+      include: [
+        { model: ObjectifTemplate, as: 'objectifTemplate' },
+        { model: Employee, as: 'employee', attributes: ['nom', 'poste'] },
+        { model: Entretien, as: 'entretien', attributes: ['titre', 'date_prevue'] }
+      ],
+      order: [['date_assignation', 'DESC']]
+    });
+
+    res.json(objectifs);
+  } catch (error) {
+    console.error('Erreur récupération objectifs assignés:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // Routes pour les templates
 app.get('/api/templates', authenticateToken, async (req, res) => {
   try {
@@ -407,7 +824,6 @@ app.get('/api/templates', authenticateToken, async (req, res) => {
   }
 });
 
-// Fonction pour créer des données de test
 const createSampleData = async () => {
   try {
     const managerCount = await Manager.count();
@@ -468,7 +884,60 @@ const createSampleData = async () => {
         }
       ]);
 
+      // Créer des objectifs templates partagés
+      await ObjectifTemplate.bulkCreate([
+        {
+          titre: 'Améliorer les compétences techniques',
+          description: 'Développer et renforcer les compétences techniques dans son domaine',
+          categorie: 'competences',
+          est_actif: true
+        },
+        {
+          titre: 'Augmenter la productivité',
+          description: 'Optimiser l\'organisation et augmenter l\'efficacité au travail',
+          categorie: 'performance',
+          est_actif: true
+        },
+        {
+          titre: 'Suivre une formation certifiante',
+          description: 'Obtenir une certification professionnelle reconnue',
+          categorie: 'developpement',
+          est_actif: true
+        },
+        {
+          titre: 'Mener un projet stratégique',
+          description: 'Prendre en charge et finaliser un projet important',
+          categorie: 'projets',
+          est_actif: true
+        },
+        {
+          titre: 'Améliorer la communication',
+          description: 'Renforcer les compétences de communication interpersonnelle',
+          categorie: 'comportemental',
+          est_actif: true
+        },
+        {
+          titre: 'Mentorat d\'un junior',
+          description: 'Accompagner et former un collaborateur junior',
+          categorie: 'developpement',
+          est_actif: true
+        },
+        {
+          titre: 'Optimiser les processus',
+          description: 'Identifier et améliorer les processus de travail',
+          categorie: 'performance',
+          est_actif: true
+        },
+        {
+          titre: 'Développer l\'autonomie',
+          description: 'Gagner en autonomie dans la prise de décision',
+          categorie: 'comportemental',
+          est_actif: true
+        }
+      ]);
+
       console.log('✅ Données de test créées !');
+      console.log('✅ 8 objectifs templates créés dans la bibliothèque partagée !');
       console.log('📧 Email de connexion: marie.dubois@entreprise.com, pierre.martin@entreprise.com, sophie.bernard@entreprise.com');
       console.log('🔑 Mot de passe: password123');
     }
@@ -477,12 +946,10 @@ const createSampleData = async () => {
   }
 };
 
-// Route de test
 app.get('/', (req, res) => {
   res.json({ message: 'API Gestion Entretiens - Prête !' });
 });
 
-// Démarrage du serveur
 const startServer = async () => {
   try {
     const connected = await connectDB();
@@ -498,6 +965,7 @@ const startServer = async () => {
       console.log(`🚀 Serveur Gestion Entretiens sur http://localhost:${PORT}`);
       console.log('📊 Base de données MySQL connectée');
       console.log('🔐 Authentification JWT activée');
+      console.log('🎯 Système d\'objectifs partagés actif');
     });
 
   } catch (error) {

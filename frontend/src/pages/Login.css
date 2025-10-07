@@ -118,6 +118,41 @@
   cursor: not-allowed;
 }
 
+/* Register Link Section */
+.register-link {
+  text-align: center;
+  padding: 20px 0;
+  border-top: 2px solid #f0f0f0;
+  border-bottom: 2px solid #f0f0f0;
+  margin-bottom: 20px;
+}
+
+.register-link p {
+  color: #666;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.register-btn {
+  display: inline-block;
+  padding: 12px 24px;
+  background: white;
+  color: #667eea;
+  border: 2px solid #667eea;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 15px;
+  transition: all 0.3s ease;
+}
+
+.register-btn:hover {
+  background: #667eea;
+  color: white;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.3);
+}
+
 .login-info {
   background-color: #f8f9fa;
   border-radius: 8px;

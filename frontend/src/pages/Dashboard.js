@@ -10,6 +10,7 @@ function Dashboard() {
   const { manager, logout } = useContext(AuthContext);
   const [employees, setEmployees] = useState([]);
   const [entretiens, setEntretiens] = useState([]);
+  const [objectifsAssignes, setObjectifsAssignes] = useState([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -19,13 +20,15 @@ function Dashboard() {
 
   const loadData = async () => {
     try {
-      const [employeesRes, entretiensRes] = await Promise.all([
+      const [employeesRes, entretiensRes, objectifsRes] = await Promise.all([
         axios.get(`${API_URL}/employees`),
-        axios.get(`${API_URL}/entretiens`)
+        axios.get(`${API_URL}/entretiens`),
+        axios.get(`${API_URL}/objectifs-assignes`)
       ]);
       
       setEmployees(employeesRes.data);
       setEntretiens(entretiensRes.data);
+      setObjectifsAssignes(objectifsRes.data);
     } catch (error) {
       console.error('Erreur chargement données:', error);
     } finally {
@@ -41,9 +44,12 @@ function Dashboard() {
   // Statistiques
   const stats = {
     totalEmployees: employees.length,
-    entretiensAPlanifier: employees.length * 7, // 1 annuel + 6 bimestriels
+    entretiensAPlanifier: employees.length * 7,
     entretiensRealises: entretiens.filter(e => e.statut === 'realise').length,
-    entretiensAVenir: entretiens.filter(e => e.statut === 'planifie').length
+    entretiensAVenir: entretiens.filter(e => e.statut === 'planifie').length,
+    objectifsTotal: objectifsAssignes.length,
+    objectifsEnCours: objectifsAssignes.filter(o => o.statut === 'en_cours').length,
+    objectifsAtteints: objectifsAssignes.filter(o => o.statut === 'atteint').length
   };
 
   if (loading) {
@@ -92,10 +98,10 @@ function Dashboard() {
         </div>
 
         <div className="stat-card">
-          <div className="stat-icon">📊</div>
+          <div className="stat-icon">🎯</div>
           <div className="stat-content">
-            <h3>{stats.entretiensAPlanifier}</h3>
-            <p>Prévus (année)</p>
+            <h3>{stats.objectifsTotal}</h3>
+            <p>Objectifs assignés</p>
           </div>
         </div>
       </div>
@@ -129,6 +135,24 @@ function Dashboard() {
             <div className="action-icon">➕</div>
             <h3>Nouvel entretien</h3>
             <p>Planifier un entretien</p>
+          </button>
+
+          <button 
+            className="action-card"
+            onClick={() => navigate('/objectifs-library')}
+          >
+            <div className="action-icon">📚</div>
+            <h3>Bibliothèque d'objectifs</h3>
+            <p>Gérer les objectifs réutilisables</p>
+          </button>
+
+          <button 
+            className="action-card"
+            onClick={() => navigate('/objectifs-dashboard')}
+          >
+            <div className="action-icon">🎯</div>
+            <h3>Suivi des objectifs</h3>
+            <p>Vue d'ensemble des objectifs assignés</p>
           </button>
 
           <button 
@@ -176,6 +200,38 @@ function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Objectifs récents */}
+      {objectifsAssignes.length > 0 && (
+        <div className="upcoming-section">
+          <h2>Objectifs récemment assignés</h2>
+          <div className="objectifs-preview">
+            {objectifsAssignes.slice(0, 5).map(objectif => (
+              <div key={objectif.id} className="objectif-preview-item">
+                <div className="objectif-preview-info">
+                  <h4>{objectif.objectifTemplate.titre}</h4>
+                  <p>👤 {objectif.employee.nom}</p>
+                  <div className="preview-progress">
+                    <div className="preview-progress-bar">
+                      <div 
+                        className="preview-progress-fill" 
+                        style={{ width: `${objectif.progres}%` }}
+                      />
+                    </div>
+                    <span className="preview-progress-text">{objectif.progres}%</span>
+                  </div>
+                </div>
+                <span className={`preview-statut statut-${objectif.statut}`}>
+                  {objectif.statut === 'en_cours' && '⏳'}
+                  {objectif.statut === 'atteint' && '✅'}
+                  {objectif.statut === 'non_atteint' && '❌'}
+                  {objectif.statut === 'reporte' && '⏸️'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

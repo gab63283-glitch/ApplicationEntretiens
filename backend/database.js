@@ -18,6 +18,46 @@ const sequelize = new Sequelize(
   }
 );
 
+// Modèle pour les codes de vérification
+const VerificationCode = sequelize.define('VerificationCode', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  email: {
+    type: DataTypes.STRING(100),
+    allowNull: false
+  },
+  code: {
+    type: DataTypes.STRING(6),
+    allowNull: false
+  },
+  nom: {
+    type: DataTypes.STRING(100),
+    allowNull: false
+  },
+  mot_de_passe_hash: {
+    type: DataTypes.STRING(255),
+    allowNull: false
+  },
+  departement: {
+    type: DataTypes.STRING(100),
+    allowNull: true
+  },
+  expires_at: {
+    type: DataTypes.DATE,
+    allowNull: false
+  },
+  verified: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
+  }
+}, {
+  tableName: 'verification_codes',
+  timestamps: true
+});
+
 // Modèle Manager
 const Manager = sequelize.define('Manager', {
   id: {
@@ -203,6 +243,104 @@ const Note = sequelize.define('Note', {
   timestamps: true
 });
 
+// Modèle ObjectifTemplate - Bibliothèque d'objectifs partagés
+const ObjectifTemplate = sequelize.define('ObjectifTemplate', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  titre: {
+    type: DataTypes.STRING(200),
+    allowNull: false
+  },
+  description: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  categorie: {
+    type: DataTypes.ENUM('competences', 'performance', 'developpement', 'projets', 'comportemental', 'autre'),
+    allowNull: false,
+    defaultValue: 'autre'
+  },
+  est_actif: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+    allowNull: false,
+    comment: 'Permet de désactiver un objectif sans le supprimer'
+  }
+}, {
+  tableName: 'objectifs_templates',
+  timestamps: true
+});
+
+// Modèle ObjectifAssigne - Objectifs assignés aux employés
+const ObjectifAssigne = sequelize.define('ObjectifAssigne', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  objectif_template_id: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: ObjectifTemplate,
+      key: 'id'
+    }
+  },
+  employee_id: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: Employee,
+      key: 'id'
+    }
+  },
+  entretien_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: Entretien,
+      key: 'id'
+    },
+    comment: 'Entretien durant lequel l\'objectif a été assigné'
+  },
+  priorite: {
+    type: DataTypes.ENUM('basse', 'moyenne', 'haute'),
+    defaultValue: 'moyenne',
+    allowNull: false
+  },
+  date_assignation: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW
+  },
+  date_echeance: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  statut: {
+    type: DataTypes.ENUM('en_cours', 'atteint', 'non_atteint', 'reporte', 'abandonne'),
+    defaultValue: 'en_cours',
+    allowNull: false
+  },
+  progres: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    allowNull: false,
+    comment: 'Pourcentage de progression (0-100)'
+  },
+  notes: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Notes spécifiques à cette assignation'
+  }
+}, {
+  tableName: 'objectifs_assignes',
+  timestamps: true
+});
+
 // Associations
 Manager.hasMany(Employee, { foreignKey: 'manager_id', as: 'employees' });
 Employee.belongsTo(Manager, { foreignKey: 'manager_id', as: 'manager' });
@@ -219,13 +357,23 @@ Entretien.belongsTo(Template, { foreignKey: 'template_id', as: 'template' });
 Entretien.hasMany(Note, { foreignKey: 'entretien_id', as: 'notes' });
 Note.belongsTo(Entretien, { foreignKey: 'entretien_id', as: 'entretien' });
 
+// Associations Objectifs
+ObjectifTemplate.hasMany(ObjectifAssigne, { foreignKey: 'objectif_template_id', as: 'assignations' });
+ObjectifAssigne.belongsTo(ObjectifTemplate, { foreignKey: 'objectif_template_id', as: 'objectifTemplate' });
+
+Employee.hasMany(ObjectifAssigne, { foreignKey: 'employee_id', as: 'objectifsAssignes' });
+ObjectifAssigne.belongsTo(Employee, { foreignKey: 'employee_id', as: 'employee' });
+
+Entretien.hasMany(ObjectifAssigne, { foreignKey: 'entretien_id', as: 'objectifsAssignes' });
+ObjectifAssigne.belongsTo(Entretien, { foreignKey: 'entretien_id', as: 'entretien' });
+
 // Test de connexion et synchronisation
 const connectDB = async () => {
   try {
     await sequelize.authenticate();
     console.log('✅ Connexion à MySQL réussie !');
     
-    await sequelize.sync({ force: false }); // force: true pour recréer les tables
+    await sequelize.sync({ force: false });
     console.log('✅ Tables créées/synchronisées !');
     
     return true;
@@ -242,5 +390,8 @@ module.exports = {
   Template,
   Entretien,
   Note,
+  ObjectifTemplate,
+  ObjectifAssigne,
+  VerificationCode,
   connectDB
 };

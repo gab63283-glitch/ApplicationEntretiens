@@ -1,5 +1,5 @@
 import React, { useState, useContext } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import './Login.css';
 
@@ -77,6 +77,13 @@ function Login() {
             {loading ? 'Connexion...' : 'Se connecter'}
           </button>
         </form>
+
+        <div className="register-link">
+          <p>Vous n'avez pas encore de compte ?</p>
+          <Link to="/register" className="register-btn">
+            Créer un compte manager
+          </Link>
+        </div>
 
         <div className="login-info">
           <p><strong>Comptes de test :</strong></p>

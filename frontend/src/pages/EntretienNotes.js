@@ -159,6 +159,12 @@ function EntretienNotes() {
           <button onClick={exportToPDF} className="export-btn">
             📄 Exporter PDF
           </button>
+         
+<div className="header-actions">
+  <button onClick={() => navigate(`/entretiens/${id}/objectifs`)} className="objectifs-btn">
+    🎯 Objectifs
+  </button>
+</div>
         </div>
       </header>
 
